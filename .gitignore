@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.env
+.DS_Store
+data/spider/spider.zip
+data/spider/__MACOSX/
+.cache/benchmarks/
+eval_runs/
+traces/
+.traces/
+*.jsonl

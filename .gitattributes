@@ -1,0 +1,2 @@
+data/spider/spider_data/**/*.sqlite filter=lfs diff=lfs merge=lfs -text
+data/spider/spider_data/**/*.sql filter=lfs diff=lfs merge=lfs -text

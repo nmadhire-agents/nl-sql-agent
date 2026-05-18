@@ -1,0 +1,42 @@
+[project]
+name = "nl-sql-agent"
+version = "0.1.0"
+description = "uv-managed SQLite NL-to-SQL CLI agent with Spider evaluation and Phoenix tracing."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+dependencies = [
+    "arize-phoenix>=8.0.0",
+    "gdown>=5.2.0",
+    "openai>=1.99.0",
+    "openai-agents>=0.2.0",
+    "openinference-instrumentation-openai>=0.1.20",
+    "opentelemetry-api>=1.30.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.30.0",
+    "opentelemetry-sdk>=1.30.0",
+    "pydantic>=2.10.0",
+    "python-dotenv>=1.0.1",
+    "sqlglot>=26.0.0",
+    "typer>=0.15.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.25.0",
+]
+
+[project.scripts]
+nl-sql = "nl_sql_agent.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+addopts = "-m 'not llm_eval and not spider_eval'"
+markers = [
+    "llm_eval: tests that call an LLM judge or run the full LLM-backed agent",
+    "spider_eval: tests that require locally downloaded Spider benchmark data",
+]
+testpaths = ["tests"]
