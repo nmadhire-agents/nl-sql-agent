@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This file is the operational handoff for coding agents working on this repository.
+This file is the operational handoff for coding agents working on this repository. Read it before changing code. It captures the project intent, important design decisions from the conversation, command workflows, and constraints that should not drift.
 
 ## Project Intent
 
@@ -20,6 +20,70 @@ Core goals established in the conversation:
 - Use Spider gold SQL for deterministic scoring.
 - Use an LLM judge as a secondary semantic-equivalence signal.
 - Use Phoenix/OpenTelemetry/OpenInference for open-source tracing, not OpenAI-hosted tracing.
+- Make README and architecture docs readable for future contributors.
+- Keep the repo Apache-2.0 licensed.
+
+## Conversation Decision Log
+
+The project evolved through these explicit user requirements:
+
+1. Build a Natural Language to SQL agent as an OpenAI Agents SDK harness with tool-based reasoning.
+2. Use SQLite everywhere so local development, Spider evals, and tests run against the same database runtime.
+3. Make the project `uv` based and expose it through a command-line interface.
+4. Add Phoenix/OpenTelemetry tracing as an open-source tracing backend.
+5. Capture useful trace data for improving the agent: system prompt, LLM calls, generated SQL, tool inputs/outputs, validation, execution, repair attempts, judge calls, and final scores.
+6. Add Spider evaluation data from the official Spider source and run evals locally against SQLite databases.
+7. Persist the Spider dev subset in the repo instead of downloading it for every test run.
+8. Prune unused Spider files to save storage while keeping the files required by the harness.
+9. Compare generated SQL with Spider gold SQL using deterministic metrics and an LLM judge.
+10. Keep LLM-backed and Spider-backed tests behind explicit pytest markers.
+11. Add a SQL-only CLI mode that returns formatted SQL for a natural-language question.
+12. Add an interactive multi-question CLI session.
+13. Ensure the NL-to-SQL agent uses `openai/openai-agents-python`, not a hand-rolled model loop.
+14. Improve the prompt and use Pydantic structured output for the final agent response.
+15. Improve README readability, especially by replacing the dense architecture diagram with smaller diagrams.
+16. Keep this `AGENTS.md` updated so future coding agents can work without reconstructing the conversation.
+
+## Current User-Facing Workflows
+
+The repo supports four main workflows:
+
+```mermaid
+flowchart LR
+    CLI["uv run nl-sql"] --> Ask["ask<br/>answer + SQL"]
+    CLI --> SQL["sql<br/>formatted SQL only"]
+    CLI --> Chat["chat<br/>multi-question session"]
+    CLI --> Eval["eval<br/>Spider scoring"]
+    CLI --> Trace["trace-server<br/>Phoenix UI"]
+```
+
+The agent workflow is:
+
+```mermaid
+flowchart TD
+    Q["Question"] --> Search["search_tables"]
+    Search --> Schema["get_schema_info"]
+    Schema --> Draft["Generate SQLite SQL"]
+    Draft --> Validate["validate_sql"]
+    Validate -->|valid| Execute["execute_query"]
+    Validate -->|invalid| Repair["Repair once"]
+    Repair --> Validate
+    Execute --> Output["SQLAgentOutput"]
+```
+
+The evaluation workflow is:
+
+```mermaid
+flowchart LR
+    Example["Spider dev example"] --> Generated["Agent SQL"]
+    Example --> Gold["Gold SQL"]
+    Generated --> GenExec["Execute generated SQL"]
+    Gold --> GoldExec["Execute gold SQL"]
+    GenExec --> Score["Deterministic scores"]
+    GoldExec --> Score
+    Score --> Judge["Optional LLM judge"]
+    Judge --> JSONL["eval_runs/*.jsonl"]
+```
 
 ## Current Architecture
 
@@ -35,6 +99,14 @@ Main package: `src/nl_sql_agent`
 - `scoring.py`: Deterministic SQL scoring and result hashing.
 - `judge.py`: LLM-as-judge prompt and structured response parser.
 - `tracing.py`: Phoenix/OpenTelemetry tracing helpers.
+
+Important non-code files:
+
+- `README.md`: user-facing setup, architecture, CLI, eval, tracing, and data docs.
+- `LICENSE`: Apache License 2.0.
+- `pyproject.toml`: package metadata, dependencies, CLI entry point, pytest markers.
+- `.gitattributes`: Git LFS tracking for Spider SQLite database files.
+- `.gitignore`: ignores caches, generated eval artifacts, downloaded archives, and trace artifacts.
 
 ## OpenAI Agents SDK Contract
 
@@ -74,6 +146,15 @@ Final agent output is structured with Pydantic:
 - `confidence`
 
 Keep the tool-executed SQL as the source of truth for CLI/eval scoring, because it is captured after validation/execution.
+
+When changing the agent, preserve these behaviors:
+
+- Schema discovery happens through tools.
+- SQL must be SQLite dialect.
+- SQL is validated before execution.
+- Final output remains Pydantic structured.
+- CLI/eval should prefer validated/executed SQL over free-form final text.
+- OpenAI-hosted tracing stays disabled unless the user explicitly asks for it.
 
 ## CLI Commands
 
@@ -257,6 +338,52 @@ uv run pytest -m llm_eval
 Default tests must remain deterministic and should not call OpenAI.
 
 Use marked tests for API-backed or benchmark-backed behavior.
+
+Current default test expectation:
+
+```text
+27 passed, 2 deselected
+```
+
+This count can change as tests are added, but default `uv run pytest` should remain fast and deterministic.
+
+## README Expectations
+
+The README is user-facing and should stay readable. Prefer several small diagrams over one dense architecture graph.
+
+Keep these README sections current when changing behavior:
+
+- Quick Start
+- Architecture At A Glance
+- Agent Tool Loop
+- Evaluation Pipeline
+- OpenAI Agents SDK Usage
+- Structured Output
+- CLI Commands
+- Evaluation Metrics
+- LLM Judge
+- Tracing Details
+- Data Persistence
+
+## Commit And Push Notes
+
+The active branch has been `main`, tracking `origin/main` at `git@github.com:nmadhire-agents/nl-sql-agent.git`.
+
+Before committing:
+
+1. Check `git status --short --branch`.
+2. Ensure the diff contains only intended changes.
+3. Run `uv run pytest` for code changes and documentation changes that touch commands or project structure.
+4. Commit with a concise imperative message.
+5. Push to `origin/main` when the user asks to commit and push.
+
+Recent relevant commits before this handoff update:
+
+- `d2ce1e5 Add SQL-only CLI command`
+- `0e2bfaa Add interactive CLI sessions`
+- `9f72a66 Add agent handoff guide`
+- `0726026 Add structured agent output schema`
+- `a0ee3aa Improve README architecture docs`
 
 Current default test themes:
 
