@@ -8,6 +8,7 @@ The project is built for harness engineering: you can run one question interacti
 
 - Converts natural-language questions into SQLite SQL.
 - Discovers schema through tools instead of stuffing all schema into the prompt.
+- Uses the OpenAI Agents SDK (`openai-agents`, imported as `agents`) for agent orchestration.
 - Validates SQL before execution with `sqlglot` and SQLite `EXPLAIN QUERY PLAN`.
 - Executes only read-only `SELECT`/`WITH` queries against SQLite.
 - Evaluates generated SQL against Spider gold SQL.
@@ -57,6 +58,50 @@ flowchart TD
     Judge --> Phoenix
     TraceServer --> Phoenix
 ```
+
+## OpenAI Agents SDK Usage
+
+The NL-to-SQL workflow is intentionally implemented as an OpenAI Agents SDK harness, not as a custom chat-completions loop.
+
+The agent code in `src/nl_sql_agent/agent.py` uses the SDK primitives from [`openai/openai-agents-python`](https://github.com/openai/openai-agents-python):
+
+- `Agent`: defines `DataAnalystAgent`, its instructions, model, and tool list.
+- `@function_tool`: exposes SQLite discovery, validation, and execution as typed agent tools.
+- `Runner.run`: executes the agent loop and allows the model to call tools across turns.
+- `RunConfig`: sets workflow metadata for the run.
+
+The tool-based reasoning path is:
+
+```mermaid
+sequenceDiagram
+    participant U as CLI
+    participant R as Runner.run
+    participant A as DataAnalystAgent
+    participant S as search_tables
+    participant G as get_schema_info
+    participant V as validate_sql
+    participant E as execute_query
+    participant DB as SQLite
+
+    U->>R: natural-language question
+    R->>A: start agent run
+    A->>S: find relevant tables
+    S->>DB: inspect sqlite_master and PRAGMA table_info
+    S-->>A: candidate tables
+    A->>G: fetch schema details
+    G->>DB: DDL, columns, keys, indexes
+    G-->>A: schema payload
+    A->>V: validate generated SQL
+    V->>DB: EXPLAIN QUERY PLAN
+    V-->>A: validation result
+    A->>E: execute validated query
+    E->>DB: read-only SELECT/WITH
+    E-->>A: capped rows
+    A-->>R: final answer and SQL
+    R-->>U: CLI output
+```
+
+There is also a regression test that imports the SDK symbols and verifies `ask_agent` still references `Agent`, `Runner.run`, `function_tool`, and `RunConfig`.
 
 ## Repository Layout
 
