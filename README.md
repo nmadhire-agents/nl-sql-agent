@@ -1,112 +1,119 @@
 # SQLite NL-to-SQL Agent
 
-`nl-sql-agent` is a `uv`-managed command-line natural-language-to-SQL agent. It uses SQLite as the only database runtime, the OpenAI Agents SDK for tool-based reasoning, Spider as the local benchmark dataset, an LLM judge for semantic SQL comparison, and Phoenix/OpenTelemetry for open-source tracing.
+`nl-sql-agent` is a `uv`-managed command-line agent that turns natural-language questions into SQLite SQL. It uses the OpenAI Agents SDK for tool-based reasoning, a persisted Spider dev subset for evaluation, Phoenix/OpenTelemetry for open-source tracing, and an optional LLM judge for semantic SQL comparison.
 
-The project is built for harness engineering: you can run one question interactively, evaluate the persisted Spider dev subset, inspect generated SQL and tool calls in Phoenix, and compare generated SQL against gold SQL with deterministic execution metrics plus an LLM judge.
+The project is built as an evaluation harness, not just a demo. You can ask one question, run a multi-question CLI session, evaluate against Spider gold SQL, inspect Phoenix traces, and compare deterministic execution accuracy with LLM judge results.
+
+## Quick Start
+
+```bash
+uv sync
+cp .env.example .env
+# Add OPENAI_API_KEY=... to .env
+```
+
+Ask a question against the included Spider SQLite data:
+
+```bash
+uv run nl-sql ask \
+  --db data/spider/spider_data/database/concert_singer/concert_singer.sqlite \
+  "How many singers do we have?"
+```
+
+Return only formatted SQL:
+
+```bash
+uv run nl-sql sql \
+  --db data/spider/spider_data/database/concert_singer/concert_singer.sqlite \
+  "How many singers do we have?"
+```
+
+Run a small Spider evaluation slice:
+
+```bash
+uv run nl-sql eval --dataset spider --data-dir data/spider --split dev --limit 25
+```
+
+Run fast deterministic tests:
+
+```bash
+uv run pytest
+```
 
 ## What It Does
 
 - Converts natural-language questions into SQLite SQL.
-- Discovers schema through tools instead of stuffing all schema into the prompt.
 - Uses the OpenAI Agents SDK (`openai-agents`, imported as `agents`) for agent orchestration.
-- Validates SQL before execution with `sqlglot` and SQLite `EXPLAIN QUERY PLAN`.
-- Executes only read-only `SELECT`/`WITH` queries against SQLite.
+- Discovers schema through tools instead of putting the whole database schema in the prompt.
+- Validates SQL with `sqlglot` and SQLite `EXPLAIN QUERY PLAN`.
+- Executes only read-only `SELECT` and `WITH` queries.
 - Evaluates generated SQL against Spider gold SQL.
-- Uses execution accuracy as the primary deterministic metric.
-- Uses an LLM judge as a secondary semantic equivalence check.
-- Captures tracing data for prompt and tool improvement through Phoenix.
+- Scores validation, execution, exact SQL match, result-set match, latency, retries, and judge verdicts.
+- Captures local open-source traces with Phoenix/OpenTelemetry.
 
-## Architecture
+## Architecture At A Glance
+
+The top-level system has four moving parts: the CLI, the OpenAI Agents SDK agent, SQLite tools, and evaluation/tracing outputs.
+
+```mermaid
+flowchart LR
+    CLI["uv run nl-sql<br/>ask | sql | chat | eval"] --> Agent["OpenAI Agents SDK<br/>DataAnalystAgent"]
+    Agent --> Tools["SQLite tools<br/>schema, validate, execute"]
+    Tools --> DB["SQLite database<br/>Spider subset or your DB"]
+    Agent --> Output["CLI output<br/>answer or formatted SQL"]
+    Agent --> Trace["Phoenix traces<br/>agent, LLM, tools, SQL"]
+    DB --> Eval["Spider eval<br/>gold SQL comparison"]
+    Eval --> Artifacts["eval_runs/*.jsonl"]
+    Eval --> Trace
+```
+
+## Agent Tool Loop
+
+The agent is intentionally forced through tool-based discovery and validation before it executes SQL.
 
 ```mermaid
 flowchart TD
-    User["CLI user"] --> CLI["uv run nl-sql"]
+    Q["User question"] --> Search["search_tables"]
+    Search --> Schema["get_schema_info"]
+    Schema --> Draft["Generate SQLite SQL"]
+    Draft --> Validate["validate_sql"]
+    Validate -->|valid| Execute["execute_query"]
+    Validate -->|invalid| Repair["Repair SQL"]
+    Repair --> Validate
+    Execute --> Final["SQLAgentOutput<br/>answer, sql, tables, confidence"]
+```
 
-    CLI --> Ask["ask command"]
-    CLI --> Eval["eval command"]
-    CLI --> Data["data download-spider"]
-    CLI --> TraceServer["trace-server"]
+## Evaluation Pipeline
 
-    Data --> SpiderSite["Official Spider website link"]
-    SpiderSite --> SpiderData["data/spider/spider_data<br/>SQLite DBs + gold SQL"]
+Spider evaluation runs locally against SQLite databases. The agent never sees the gold SQL before generating its answer.
 
-    Ask --> Agent["OpenAI Agents SDK<br/>DataAnalystAgent"]
-    Eval --> Agent
-    Eval --> SpiderData
-
-    Agent --> SearchTool["search_tables"]
-    Agent --> SchemaTool["get_schema_info"]
-    Agent --> ValidateTool["validate_sql"]
-    Agent --> ExecuteTool["execute_query"]
-
-    SearchTool --> SQLite["SQLite database"]
-    SchemaTool --> SQLite
-    ValidateTool --> Safety["SQL safety checks<br/>sqlglot + EXPLAIN QUERY PLAN"]
-    Safety --> SQLite
-    ExecuteTool --> SQLite
-
-    Eval --> Score["Deterministic scorer<br/>validation, execution, exact match,<br/>result hash match"]
-    Eval --> Judge["LLM judge<br/>gold SQL vs generated SQL<br/>plus result summaries"]
-    Score --> Artifacts["eval_runs/*.jsonl"]
-    Judge --> Artifacts
-
-    Agent --> Phoenix["Phoenix / OpenTelemetry tracing"]
-    SearchTool --> Phoenix
-    SchemaTool --> Phoenix
-    ValidateTool --> Phoenix
-    ExecuteTool --> Phoenix
-    Judge --> Phoenix
-    TraceServer --> Phoenix
+```mermaid
+flowchart LR
+    Example["Spider dev example<br/>question + db_id"] --> AgentSQL["Agent-generated SQL"]
+    Example --> GoldSQL["Gold SQL"]
+    AgentSQL --> RunA["Execute generated SQL"]
+    GoldSQL --> RunG["Execute gold SQL"]
+    RunA --> Score["Deterministic scoring"]
+    RunG --> Score
+    Score --> Judge["Optional LLM judge"]
+    Judge --> JSONL["JSONL artifact<br/>metrics + trace id"]
 ```
 
 ## OpenAI Agents SDK Usage
 
-The NL-to-SQL workflow is intentionally implemented as an OpenAI Agents SDK harness, not as a custom chat-completions loop.
+The NL-to-SQL workflow is implemented as an OpenAI Agents SDK harness, not as a custom chat-completions loop. The agent code lives in `src/nl_sql_agent/agent.py` and uses these SDK primitives from [`openai/openai-agents-python`](https://github.com/openai/openai-agents-python):
 
-The agent code in `src/nl_sql_agent/agent.py` uses the SDK primitives from [`openai/openai-agents-python`](https://github.com/openai/openai-agents-python):
+- `Agent`: defines `DataAnalystAgent`, its instructions, model, output schema, and tools.
+- `@function_tool`: exposes SQLite discovery, validation, and execution as typed tools.
+- `Runner.run`: executes the agent loop and allows tool calls across turns.
+- `RunConfig`: attaches workflow metadata.
+- `output_type=SQLAgentOutput`: validates the final response with Pydantic.
 
-- `Agent`: defines `DataAnalystAgent`, its instructions, model, and tool list.
-- `@function_tool`: exposes SQLite discovery, validation, and execution as typed agent tools.
-- `Runner.run`: executes the agent loop and allows the model to call tools across turns.
-- `RunConfig`: sets workflow metadata for the run.
-- `output_type=SQLAgentOutput`: validates the final answer with a Pydantic schema.
+There is a regression test that imports the SDK symbols and verifies `ask_agent` still references `Agent`, `Runner.run`, `function_tool`, and `RunConfig`.
 
-The tool-based reasoning path is:
+## Structured Output
 
-```mermaid
-sequenceDiagram
-    participant U as CLI
-    participant R as Runner.run
-    participant A as DataAnalystAgent
-    participant S as search_tables
-    participant G as get_schema_info
-    participant V as validate_sql
-    participant E as execute_query
-    participant DB as SQLite
-
-    U->>R: natural-language question
-    R->>A: start agent run
-    A->>S: find relevant tables
-    S->>DB: inspect sqlite_master and PRAGMA table_info
-    S-->>A: candidate tables
-    A->>G: fetch schema details
-    G->>DB: DDL, columns, keys, indexes
-    G-->>A: schema payload
-    A->>V: validate generated SQL
-    V->>DB: EXPLAIN QUERY PLAN
-    V-->>A: validation result
-    A->>E: execute validated query
-    E->>DB: read-only SELECT/WITH
-    E-->>A: capped rows
-    A-->>R: final answer and SQL
-    R-->>U: CLI output
-```
-
-There is also a regression test that imports the SDK symbols and verifies `ask_agent` still references `Agent`, `Runner.run`, `function_tool`, and `RunConfig`.
-
-## Structured Agent Output
-
-The agent final response is validated with Pydantic through the Agents SDK `output_type` parameter. The schema is `SQLAgentOutput` in `src/nl_sql_agent/agent.py`:
+The final agent response is validated with Pydantic through the Agents SDK `output_type` parameter. The schema is `SQLAgentOutput`:
 
 ```json
 {
@@ -120,7 +127,7 @@ The agent final response is validated with Pydantic through the Agents SDK `outp
 }
 ```
 
-The CLI still uses the SQL captured from validated/executed tools as the source of truth for `nl-sql sql` and eval scoring. The structured model ensures the final agent response remains machine-readable for downstream harness work.
+The CLI still treats the SQL captured from validated and executed tools as the source of truth for `nl-sql sql` and eval scoring. The structured response keeps downstream harness work machine-readable.
 
 ## Repository Layout
 
@@ -145,13 +152,7 @@ data/spider/
   spider_data/      Persisted Spider dev subset used by evals and tests
 ```
 
-## Setup
-
-Install dependencies with `uv`:
-
-```bash
-uv sync
-```
+## Configuration
 
 Create a local `.env` file:
 
@@ -178,31 +179,36 @@ NL_SQL_AGENT_MODEL=gpt-4.1-mini
 NL_SQL_JUDGE_MODEL=gpt-4.1-mini
 ```
 
-## Commands
+## CLI Commands
 
-Download, prune, or verify Spider:
+### Download Or Verify Spider Data
 
 ```bash
 uv run nl-sql data download-spider --output data/spider
 ```
 
-`download-spider` is idempotent. It reuses an existing verified `data/spider` download by default. Use `--force` only when you intentionally want to redownload and re-extract the dataset:
-After a forced download, the downloader prunes Spider to the files this harness uses: `dev.json`, `tables.json`, and `database/*/*.sqlite`.
+`download-spider` is idempotent. It reuses the existing verified `data/spider` directory by default. Use `--force` only when you intentionally want to redownload and re-extract the dataset:
 
 ```bash
 uv run nl-sql data download-spider --output data/spider --force
 ```
 
-Ask a question against any SQLite database:
+After a forced download, the downloader prunes Spider to the files this harness uses: `dev.json`, `tables.json`, and `database/*/*.sqlite`.
+
+### Ask One Question
 
 ```bash
-uv run nl-sql ask --db data/spider/spider_data/database/concert_singer/concert_singer.sqlite "How many singers do we have?"
+uv run nl-sql ask \
+  --db data/spider/spider_data/database/concert_singer/concert_singer.sqlite \
+  "How many singers do we have?"
 ```
 
-Generate only the formatted SQL for a natural-language question:
+### Generate SQL Only
 
 ```bash
-uv run nl-sql sql --db data/spider/spider_data/database/concert_singer/concert_singer.sqlite "How many singers do we have?"
+uv run nl-sql sql \
+  --db data/spider/spider_data/database/concert_singer/concert_singer.sqlite \
+  "How many singers do we have?"
 ```
 
 Example output:
@@ -213,16 +219,20 @@ SELECT
 FROM singer
 ```
 
-Use `--raw` if you want the normalized single-line SQL instead of pretty output:
+Use `--raw` for normalized single-line SQL:
 
 ```bash
-uv run nl-sql sql --db data/spider/spider_data/database/concert_singer/concert_singer.sqlite "How many singers do we have?" --raw
+uv run nl-sql sql \
+  --db data/spider/spider_data/database/concert_singer/concert_singer.sqlite \
+  "How many singers do we have?" \
+  --raw
 ```
 
-Start an interactive session and ask multiple questions against the same database:
+### Ask Multiple Questions In One Session
 
 ```bash
-uv run nl-sql chat --db data/spider/spider_data/database/concert_singer/concert_singer.sqlite
+uv run nl-sql chat \
+  --db data/spider/spider_data/database/concert_singer/concert_singer.sqlite
 ```
 
 Inside the session:
@@ -233,40 +243,86 @@ nl-sql: Show them by country
 nl-sql: :exit
 ```
 
-Use `--sql-only` if you want the interactive session to print only SQL:
+Use `--sql-only` to print only SQL during the interactive session:
 
 ```bash
-uv run nl-sql chat --db data/spider/spider_data/database/concert_singer/concert_singer.sqlite --sql-only
+uv run nl-sql chat \
+  --db data/spider/spider_data/database/concert_singer/concert_singer.sqlite \
+  --sql-only
 ```
 
 For conversation context across separate CLI invocations, pass the same `--session-id`:
 
 ```bash
-uv run nl-sql ask --db data/spider/spider_data/database/concert_singer/concert_singer.sqlite --session-id concert-demo "How many singers do we have?"
-uv run nl-sql sql --db data/spider/spider_data/database/concert_singer/concert_singer.sqlite --session-id concert-demo "Show them by country"
+uv run nl-sql ask \
+  --db data/spider/spider_data/database/concert_singer/concert_singer.sqlite \
+  --session-id concert-demo \
+  "How many singers do we have?"
+
+uv run nl-sql sql \
+  --db data/spider/spider_data/database/concert_singer/concert_singer.sqlite \
+  --session-id concert-demo \
+  "Show them by country"
 ```
 
 By default, persisted one-shot sessions use `.cache/nl_sql_agent_sessions.sqlite`. Interactive `chat` sessions are in-memory unless you pass `--session-store`.
 
-Run a Spider eval slice:
+### Run Evaluations
+
+Small local eval slice:
 
 ```bash
-uv run nl-sql eval --dataset spider --data-dir data/spider --split dev --limit 25 --output eval_runs/spider_dev_25.jsonl
+uv run nl-sql eval \
+  --dataset spider \
+  --data-dir data/spider \
+  --split dev \
+  --limit 25 \
+  --output eval_runs/spider_dev_25.jsonl
 ```
 
-Run with the LLM judge disabled:
+Disable the LLM judge:
 
 ```bash
-uv run nl-sql eval --dataset spider --data-dir data/spider --split dev --limit 25 --no-judge
+uv run nl-sql eval \
+  --dataset spider \
+  --data-dir data/spider \
+  --split dev \
+  --limit 25 \
+  --no-judge
 ```
 
 Run the full persisted Spider dev split:
 
 ```bash
-uv run nl-sql eval --dataset spider --data-dir data/spider --split dev --limit 1034 --judge --output eval_runs/spider_dev_full_with_judge.jsonl
+uv run nl-sql eval \
+  --dataset spider \
+  --data-dir data/spider \
+  --split dev \
+  --limit 1034 \
+  --judge \
+  --output eval_runs/spider_dev_full_with_judge.jsonl
 ```
 
-The full dev split makes one agent call per example and, with `--judge`, one additional judge call per example. Expect runtime and API usage to scale with the `--limit`.
+The full dev split makes one agent call per example and, with `--judge`, one additional judge call per example. Runtime and API usage scale with `--limit`.
+
+### Start Tracing
+
+Start Phoenix in one terminal:
+
+```bash
+uv run nl-sql trace-server
+```
+
+Run an eval or ask command in another terminal:
+
+```bash
+NL_SQL_TRACE_MODE=full uv run nl-sql eval \
+  --dataset spider \
+  --data-dir data/spider \
+  --split dev \
+  --limit 1 \
+  --judge
+```
 
 ## Evaluation Metrics
 
@@ -292,14 +348,7 @@ The scorer compares result values rather than output column aliases, so harmless
 
 ## LLM Judge
 
-The LLM judge compares:
-
-- Natural-language question
-- Relevant schema
-- Gold SQL
-- Generated SQL
-- Gold execution result summary
-- Generated execution result summary
+The LLM judge compares the natural-language question, relevant schema, gold SQL, generated SQL, gold execution result summary, and generated execution result summary.
 
 It returns structured JSON:
 
@@ -313,21 +362,9 @@ It returns structured JSON:
 }
 ```
 
-Use the judge as a secondary metric. The deterministic result match is still the primary signal for benchmark scoring.
+Use the judge as a secondary metric. The deterministic result match is still the primary benchmark signal.
 
-## Tracing
-
-Start Phoenix in one terminal:
-
-```bash
-uv run nl-sql trace-server
-```
-
-Run an eval or ask command in another terminal:
-
-```bash
-NL_SQL_TRACE_MODE=full uv run nl-sql eval --dataset spider --data-dir data/spider --split dev --limit 1 --judge
-```
+## Tracing Details
 
 Tracing modes:
 
@@ -347,7 +384,7 @@ Useful trace spans:
 - `eval.llm_judge`: judge call metadata.
 - OpenInference spans: OpenAI client calls when instrumentation is active.
 
-This tracing data is intended to support prompt/tool improvements. Common workflow:
+Recommended improvement loop:
 
 1. Run a small Spider slice with `NL_SQL_TRACE_MODE=full`.
 2. Inspect failed examples in Phoenix.
@@ -375,16 +412,7 @@ LLM-backed tests require `OPENAI_API_KEY` and Spider data:
 uv run pytest -m llm_eval
 ```
 
-Default coverage includes:
-
-- SQL safety validation
-- SQLite schema discovery
-- Query validation and execution caps
-- Result canonicalization and hashing
-- Spider loader behavior
-- Downloader idempotency
-- LLM judge prompt/schema validation without model calls
-- Tracing redaction and full-mode payload behavior
+Default coverage includes SQL safety validation, SQLite schema discovery, query validation and execution caps, result canonicalization and hashing, Spider loader behavior, downloader idempotency, LLM judge prompt/schema validation without model calls, and tracing redaction/full-mode payload behavior.
 
 ## Data Persistence
 
