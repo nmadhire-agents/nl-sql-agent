@@ -2,7 +2,7 @@
 
 `nl-sql-agent` is a `uv`-managed command-line natural-language-to-SQL agent. It uses SQLite as the only database runtime, the OpenAI Agents SDK for tool-based reasoning, Spider as the local benchmark dataset, an LLM judge for semantic SQL comparison, and Phoenix/OpenTelemetry for open-source tracing.
 
-The project is built for harness engineering: you can run one question interactively, evaluate a slice of Spider, inspect generated SQL and tool calls in Phoenix, and compare generated SQL against gold SQL with deterministic execution metrics plus an LLM judge.
+The project is built for harness engineering: you can run one question interactively, evaluate the persisted Spider dev subset, inspect generated SQL and tool calls in Phoenix, and compare generated SQL against gold SQL with deterministic execution metrics plus an LLM judge.
 
 ## What It Does
 
@@ -78,7 +78,7 @@ tests/
   test_*.py         Fast deterministic tests plus marked eval tests
 
 data/spider/
-  spider_data/      Persisted Spider dataset used by evals and tests
+  spider_data/      Persisted Spider dev subset used by evals and tests
 ```
 
 ## Setup
@@ -116,13 +116,14 @@ NL_SQL_JUDGE_MODEL=gpt-4.1-mini
 
 ## Commands
 
-Download or verify Spider:
+Download, prune, or verify Spider:
 
 ```bash
 uv run nl-sql data download-spider --output data/spider
 ```
 
 `download-spider` is idempotent. It reuses an existing verified `data/spider` download by default. Use `--force` only when you intentionally want to redownload and re-extract the dataset:
+After a forced download, the downloader prunes Spider to the files this harness uses: `dev.json`, `tables.json`, and `database/*/*.sqlite`.
 
 ```bash
 uv run nl-sql data download-spider --output data/spider --force
@@ -146,7 +147,7 @@ Run with the LLM judge disabled:
 uv run nl-sql eval --dataset spider --data-dir data/spider --split dev --limit 25 --no-judge
 ```
 
-Run the full Spider dev split:
+Run the full persisted Spider dev split:
 
 ```bash
 uv run nl-sql eval --dataset spider --data-dir data/spider --split dev --limit 1034 --judge --output eval_runs/spider_dev_full_with_judge.jsonl
@@ -274,13 +275,22 @@ Default coverage includes:
 
 ## Data Persistence
 
-The extracted Spider dataset is expected to live at:
+The persisted Spider dev subset is expected to live at:
 
 ```text
 data/spider/spider_data
 ```
 
-The repository is configured to allow that extracted dataset to be tracked by git. The redundant downloaded archive and macOS zip metadata remain ignored:
+The repository tracks only the files used by this harness:
+
+```text
+data/spider/spider_data/README.txt
+data/spider/spider_data/dev.json
+data/spider/spider_data/tables.json
+data/spider/spider_data/database/*/*.sqlite
+```
+
+Unused Spider files such as `test_database`, train/test JSON, schema dumps, CSV sources, annotations, and the downloaded zip archive are intentionally removed or ignored to keep repository size lower. The redundant downloaded archive and macOS zip metadata remain ignored:
 
 ```text
 data/spider/spider.zip
@@ -290,4 +300,3 @@ data/spider/__MACOSX/
 ## License
 
 This project is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
-

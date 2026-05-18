@@ -32,3 +32,13 @@ def test_spider_loader_tiny_fixture(tmp_path: Path) -> None:
     assert example.db_id == "tiny_sales"
     assert example.db_path.exists()
 
+
+def test_spider_loader_rejects_non_dev_split(tmp_path: Path) -> None:
+    write_tiny_spider(tmp_path)
+    dataset = SpiderDataset(tmp_path)
+    try:
+        dataset.examples("train")
+    except ValueError as exc:
+        assert "dev subset" in str(exc)
+    else:
+        raise AssertionError("Expected non-dev split to be rejected")

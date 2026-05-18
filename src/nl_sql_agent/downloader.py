@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+import shutil
 import urllib.request
 import zipfile
 
@@ -35,7 +36,9 @@ def download_spider(output: Path, force: bool = False) -> Path:
     with zipfile.ZipFile(archive_path) as archive:
         archive.extractall(output)
 
-    return verify_spider_dir(output)
+    root = verify_spider_dir(output)
+    prune_spider_dir(root)
+    return verify_spider_dir(root)
 
 
 def find_spider_download_url() -> str:
@@ -55,3 +58,27 @@ def google_drive_file_id(url: str) -> str:
     if match:
         return match.group(1)
     raise ValueError(f"Could not parse Google Drive file id from {url}")
+
+
+def prune_spider_dir(root: Path) -> None:
+    """Keep only files needed by this SQLite dev-set harness."""
+    root = Path(root)
+    keep_root_files = {"README.txt", "dev.json", "tables.json"}
+    for child in root.iterdir():
+        if child.name == "database":
+            continue
+        if child.is_file() and child.name in keep_root_files:
+            continue
+        if child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+
+    database = root / "database"
+    for file_path in database.rglob("*"):
+        if file_path.is_file() and file_path.suffix != ".sqlite":
+            file_path.unlink()
+
+    for directory in sorted(database.rglob("*"), reverse=True):
+        if directory.is_dir() and not any(directory.iterdir()):
+            directory.rmdir()

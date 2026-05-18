@@ -22,8 +22,9 @@ class SpiderDataset:
         self.tables_by_db = {table["db_id"]: table for table in self.tables}
 
     def examples(self, split: str = "dev", limit: int | None = None) -> list[SpiderExample]:
-        file_name = "train_spider.json" if split == "train" else f"{split}.json"
-        rows = _load_json(self.root / file_name)
+        if split != "dev":
+            raise ValueError("This repo persists the Spider dev subset only; use split='dev'.")
+        rows = _load_json(self.root / "dev.json")
         examples = []
         for index, row in enumerate(rows[:limit]):
             db_id = row["db_id"]
@@ -55,7 +56,7 @@ def resolve_spider_root(path: Path) -> Path:
         if _has_spider_files(candidate):
             return candidate
     raise FileNotFoundError(
-        f"Could not find Spider files under {path}. Expected train_spider.json, dev.json, tables.json, and database/."
+        f"Could not find Spider files under {path}. Expected dev.json, tables.json, and database/."
     )
 
 
@@ -63,7 +64,7 @@ def verify_spider_dir(path: Path) -> Path:
     root = resolve_spider_root(path)
     missing = [
         name
-        for name in ("train_spider.json", "dev.json", "tables.json", "database")
+        for name in ("dev.json", "tables.json", "database")
         if not (root / name).exists()
     ]
     if missing:
@@ -81,4 +82,3 @@ def _has_spider_files(path: Path) -> bool:
 def _load_json(path: Path):
     with path.open("r", encoding="utf-8") as handle:
         return json.load(handle)
-
