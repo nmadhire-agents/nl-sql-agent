@@ -135,6 +135,26 @@ Ask a question against any SQLite database:
 uv run nl-sql ask --db data/spider/spider_data/database/concert_singer/concert_singer.sqlite "How many singers do we have?"
 ```
 
+Generate only the formatted SQL for a natural-language question:
+
+```bash
+uv run nl-sql sql --db data/spider/spider_data/database/concert_singer/concert_singer.sqlite "How many singers do we have?"
+```
+
+Example output:
+
+```sql
+SELECT
+  COUNT(*) AS singer_count
+FROM singer
+```
+
+Use `--raw` if you want the normalized single-line SQL instead of pretty output:
+
+```bash
+uv run nl-sql sql --db data/spider/spider_data/database/concert_singer/concert_singer.sqlite "How many singers do we have?" --raw
+```
+
 Run a Spider eval slice:
 
 ```bash

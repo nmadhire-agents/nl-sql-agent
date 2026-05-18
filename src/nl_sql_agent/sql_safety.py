@@ -30,6 +30,11 @@ def normalize_sql(sql: str) -> str:
     return parsed.sql(dialect="sqlite", pretty=False).strip()
 
 
+def format_sql(sql: str) -> str:
+    parsed = sqlglot.parse_one(sql, read="sqlite")
+    return parsed.sql(dialect="sqlite", pretty=True).strip()
+
+
 def validate_readonly_sql(sql: str) -> ValidationResult:
     text = sql.strip()
     if not text:
@@ -71,4 +76,3 @@ def _is_readonly_query(statement: exp.Expression) -> bool:
             exp.Intersect,
         ),
     )
-

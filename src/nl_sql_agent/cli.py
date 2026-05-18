@@ -9,6 +9,7 @@ from nl_sql_agent.agent import ask_agent
 from nl_sql_agent.config import load_settings
 from nl_sql_agent.downloader import download_spider
 from nl_sql_agent.evaluator import run_spider_eval
+from nl_sql_agent.sql_safety import format_sql
 from nl_sql_agent.tracing import configure_tracing
 
 
@@ -21,6 +22,7 @@ app.add_typer(data_app, name="data")
 def ask(
     question: str,
     db: Path = typer.Option(None, "--db", help="SQLite database path."),
+    formatted_sql: bool = typer.Option(True, "--format-sql/--raw-sql", help="Pretty-print generated SQL in the response."),
 ) -> None:
     settings = load_settings()
     configure_tracing(settings.phoenix_collector_endpoint, settings.trace_mode)
@@ -31,7 +33,25 @@ def ask(
     typer.echo(result.answer)
     if result.generated_sql:
         typer.echo("\nSQL:")
-        typer.echo(result.generated_sql)
+        typer.echo(_display_sql(result.generated_sql, formatted_sql))
+
+
+@app.command("sql")
+def sql_cmd(
+    question: str,
+    db: Path = typer.Option(None, "--db", help="SQLite database path."),
+    formatted: bool = typer.Option(True, "--format/--raw", help="Pretty-print the generated SQL."),
+) -> None:
+    """Generate and print only the SQLite SQL for a natural-language question."""
+    settings = load_settings()
+    configure_tracing(settings.phoenix_collector_endpoint, settings.trace_mode)
+    db_path = db or settings.default_db_path
+    if db_path is None:
+        raise typer.BadParameter("Provide --db or set NL_SQL_DEFAULT_DB_PATH.")
+    result = asyncio.run(ask_agent(question, db_path, settings))
+    if not result.generated_sql:
+        raise typer.Exit(code=1)
+    typer.echo(_display_sql(result.generated_sql, formatted))
 
 
 @app.command("eval")
@@ -89,3 +109,12 @@ def trace_server(host: str = "127.0.0.1", port: int = 6006) -> None:
 
 def main() -> None:
     app()
+
+
+def _display_sql(sql: str, formatted: bool) -> str:
+    if not formatted:
+        return sql
+    try:
+        return format_sql(sql)
+    except Exception:
+        return sql
