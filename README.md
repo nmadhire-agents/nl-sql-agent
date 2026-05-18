@@ -69,6 +69,7 @@ The agent code in `src/nl_sql_agent/agent.py` uses the SDK primitives from [`ope
 - `@function_tool`: exposes SQLite discovery, validation, and execution as typed agent tools.
 - `Runner.run`: executes the agent loop and allows the model to call tools across turns.
 - `RunConfig`: sets workflow metadata for the run.
+- `output_type=SQLAgentOutput`: validates the final answer with a Pydantic schema.
 
 The tool-based reasoning path is:
 
@@ -102,6 +103,24 @@ sequenceDiagram
 ```
 
 There is also a regression test that imports the SDK symbols and verifies `ask_agent` still references `Agent`, `Runner.run`, `function_tool`, and `RunConfig`.
+
+## Structured Agent Output
+
+The agent final response is validated with Pydantic through the Agents SDK `output_type` parameter. The schema is `SQLAgentOutput` in `src/nl_sql_agent/agent.py`:
+
+```json
+{
+  "answer": "There are 6 singers.",
+  "sql": "SELECT count(*) FROM singer",
+  "tables_used": ["singer"],
+  "row_count": 1,
+  "truncated": false,
+  "validation_error": null,
+  "confidence": "high"
+}
+```
+
+The CLI still uses the SQL captured from validated/executed tools as the source of truth for `nl-sql sql` and eval scoring. The structured model ensures the final agent response remains machine-readable for downstream harness work.
 
 ## Repository Layout
 

@@ -19,3 +19,23 @@ def test_agent_module_uses_openai_agents_sdk_primitives() -> None:
     assert "RunConfig(" in source
     assert "Agent(" in source
     assert "session=session" in source
+    assert "output_type=SQLAgentOutput" in source
+
+
+def test_agent_structured_output_model_validates() -> None:
+    from nl_sql_agent.agent import SQLAgentOutput, _coerce_structured_output
+
+    output = _coerce_structured_output(
+        {
+            "answer": "There are 6 singers.",
+            "sql": "SELECT count(*) FROM singer",
+            "tables_used": ["singer"],
+            "row_count": 1,
+            "truncated": False,
+            "validation_error": None,
+            "confidence": "high",
+        }
+    )
+
+    assert isinstance(output, SQLAgentOutput)
+    assert output.confidence == "high"

@@ -2,23 +2,57 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
 
 from nl_sql_agent.config import Settings
 from nl_sql_agent.sqlite_tools import SQLiteToolkit
 from nl_sql_agent.tracing import safe_attr, set_span_attribute, span, trace_payload
 
 
-INSTRUCTIONS = """You are a careful SQLite data analyst.
-You must:
-1. Identify likely tables with search_tables.
-2. Fetch schema with get_schema_info before writing SQL.
-3. Generate SQLite SQL only.
-4. Validate SQL with validate_sql before executing it.
-5. Execute only validated read-only SQL with execute_query.
-6. If validation or execution fails, correct the SQL once using the error and schema.
-7. Summarize the final data and include the SQL you used.
-Never use DDL, DML, PRAGMA, ATTACH, DETACH, VACUUM, or multiple statements."""
+INSTRUCTIONS = """You are a careful SQLite data analyst building SQL for a benchmark harness.
+
+Goal:
+- Convert the user's natural-language question into correct SQLite SQL.
+- Use tools to bridge from user intent to physical schema.
+- Return a concise, structured final answer.
+
+Required workflow:
+1. Use search_tables first to identify candidate tables and columns.
+2. Use get_schema_info for the relevant tables before writing SQL.
+3. Generate SQLite SQL only. Prefer explicit joins, clear aliases, and aggregate names.
+4. Use validate_sql before execution.
+5. Use execute_query only after validation succeeds.
+6. If validation or execution fails, inspect the error, fetch schema again if useful, and retry once.
+7. Base the final answer only on executed query results. If no SQL was executed, say why.
+
+Safety rules:
+- Never use DDL, DML, PRAGMA, ATTACH, DETACH, VACUUM, or multiple statements.
+- Never invent tables or columns. If schema is ambiguous, use the available schema and state uncertainty.
+- Do not expose hidden tool internals; summarize the result plainly.
+
+Structured final output:
+- answer: natural-language answer or explanation.
+- sql: the final validated/executed SQL, or null if no SQL could be produced.
+- tables_used: table names used by the query.
+- row_count: number of rows returned by execute_query, if known.
+- truncated: whether execute_query reported truncated rows.
+- validation_error: final validation/execution error, if unresolved.
+- confidence: high when SQL executed and directly answers the question; medium for partial/ambiguous answers; low when no SQL executed."""
+
+
+class SQLAgentOutput(BaseModel):
+    answer: str = Field(description="Concise natural-language answer for the user.")
+    sql: str | None = Field(default=None, description="Final validated or executed SQLite SQL.")
+    tables_used: list[str] = Field(default_factory=list, description="SQLite tables referenced by the final SQL.")
+    row_count: int | None = Field(default=None, description="Number of rows returned by the final query, if known.")
+    truncated: bool = Field(default=False, description="Whether query rows were truncated by the execution tool.")
+    validation_error: str | None = Field(default=None, description="Final validation or execution error, if unresolved.")
+    confidence: Literal["low", "medium", "high"] = Field(
+        default="medium",
+        description="Confidence that the final SQL and answer satisfy the question.",
+    )
 
 
 @dataclass
@@ -26,6 +60,7 @@ class AgentAnswer:
     answer: str
     generated_sql: str | None
     validation_error: str | None
+    structured_output: SQLAgentOutput | None = None
     trace_id: str | None = None
     raw: Any | None = None
 
@@ -89,6 +124,7 @@ async def ask_agent_with_session(
         instructions=INSTRUCTIONS,
         model=settings.agent_model,
         tools=[search_tables, get_schema_info, validate_sql, execute_query],
+        output_type=SQLAgentOutput,
     )
     with span(
         "agent.run",
@@ -105,14 +141,26 @@ async def ask_agent_with_session(
             session=session,
             run_config=RunConfig(workflow_name="nl-sql-agent", trace_include_sensitive_data=False),
         )
-        final_answer = str(result.final_output)
+        structured_output = _coerce_structured_output(result.final_output)
+        final_answer = structured_output.answer if structured_output else str(result.final_output)
         generated_sql = toolkit.last_executed_sql or toolkit.last_validated_sql
+        if generated_sql is None and structured_output:
+            generated_sql = structured_output.sql
         set_span_attribute(current, "final_answer", safe_attr(final_answer, settings.trace_mode))
         if generated_sql:
             set_span_attribute(current, "generated_sql", safe_attr(generated_sql, settings.trace_mode))
     return AgentAnswer(
         answer=final_answer,
         generated_sql=generated_sql,
-        validation_error=toolkit.last_error,
+        validation_error=toolkit.last_error or (structured_output.validation_error if structured_output else None),
+        structured_output=structured_output,
         raw=result,
     )
+
+
+def _coerce_structured_output(value: Any) -> SQLAgentOutput | None:
+    if isinstance(value, SQLAgentOutput):
+        return value
+    if isinstance(value, dict):
+        return SQLAgentOutput.model_validate(value)
+    return None

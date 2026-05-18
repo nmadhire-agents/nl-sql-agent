@@ -47,6 +47,7 @@ The NL-to-SQL agent must keep using these SDK primitives:
 - `Runner.run`
 - `RunConfig`
 - `SQLiteSession` for multi-question CLI sessions where needed
+- `output_type=SQLAgentOutput` for Pydantic-validated final responses
 
 The regression test `tests/test_agents_sdk_usage.py` exists to catch drift from this design.
 
@@ -59,6 +60,20 @@ The intended tool loop is:
 5. `execute_query`
 6. repair once if validation/execution fails
 7. summarize answer and expose generated SQL
+
+The prompt in `agent.py` is intentionally operational: it requires schema discovery before SQL, validation before execution, one repair attempt, and final answers grounded in executed results.
+
+Final agent output is structured with Pydantic:
+
+- `answer`
+- `sql`
+- `tables_used`
+- `row_count`
+- `truncated`
+- `validation_error`
+- `confidence`
+
+Keep the tool-executed SQL as the source of truth for CLI/eval scoring, because it is captured after validation/execution.
 
 ## CLI Commands
 
@@ -297,4 +312,3 @@ For changes touching LLM judge behavior, run the marked LLM test only when API u
 ```bash
 uv run pytest -m llm_eval
 ```
-
