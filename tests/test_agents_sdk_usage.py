@@ -18,3 +18,4 @@ def test_agent_module_uses_openai_agents_sdk_primitives() -> None:
     assert "@function_tool" in source
     assert "RunConfig(" in source
     assert "Agent(" in source
+    assert "session=session" in source

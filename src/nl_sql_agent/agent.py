@@ -31,6 +31,15 @@ class AgentAnswer:
 
 
 async def ask_agent(question: str, db_path: Path, settings: Settings) -> AgentAnswer:
+    return await ask_agent_with_session(question, db_path, settings, session=None)
+
+
+async def ask_agent_with_session(
+    question: str,
+    db_path: Path,
+    settings: Settings,
+    session: Any | None = None,
+) -> AgentAnswer:
     try:
         from agents import Agent, RunConfig, Runner, function_tool, set_tracing_disabled
     except ImportError as exc:
@@ -93,6 +102,7 @@ async def ask_agent(question: str, db_path: Path, settings: Settings) -> AgentAn
         result = await Runner.run(
             agent,
             input=question,
+            session=session,
             run_config=RunConfig(workflow_name="nl-sql-agent", trace_include_sensitive_data=False),
         )
         final_answer = str(result.final_output)

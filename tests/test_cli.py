@@ -18,3 +18,16 @@ def test_sql_command_is_registered() -> None:
     result = CliRunner().invoke(app, ["sql", "--help"])
     assert result.exit_code == 0
     assert "Generate and print only" in result.output
+
+
+def test_chat_command_is_registered() -> None:
+    result = CliRunner().invoke(app, ["chat", "--help"])
+    assert result.exit_code == 0
+    assert "interactive NL-to-SQL session" in result.output
+
+
+def test_session_options_are_registered() -> None:
+    result = CliRunner().invoke(app, ["ask", "--help"])
+    assert result.exit_code == 0
+    assert "--session-id" in result.output
+    assert "--session-store" in result.output

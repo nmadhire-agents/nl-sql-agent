@@ -200,6 +200,35 @@ Use `--raw` if you want the normalized single-line SQL instead of pretty output:
 uv run nl-sql sql --db data/spider/spider_data/database/concert_singer/concert_singer.sqlite "How many singers do we have?" --raw
 ```
 
+Start an interactive session and ask multiple questions against the same database:
+
+```bash
+uv run nl-sql chat --db data/spider/spider_data/database/concert_singer/concert_singer.sqlite
+```
+
+Inside the session:
+
+```text
+nl-sql: How many singers do we have?
+nl-sql: Show them by country
+nl-sql: :exit
+```
+
+Use `--sql-only` if you want the interactive session to print only SQL:
+
+```bash
+uv run nl-sql chat --db data/spider/spider_data/database/concert_singer/concert_singer.sqlite --sql-only
+```
+
+For conversation context across separate CLI invocations, pass the same `--session-id`:
+
+```bash
+uv run nl-sql ask --db data/spider/spider_data/database/concert_singer/concert_singer.sqlite --session-id concert-demo "How many singers do we have?"
+uv run nl-sql sql --db data/spider/spider_data/database/concert_singer/concert_singer.sqlite --session-id concert-demo "Show them by country"
+```
+
+By default, persisted one-shot sessions use `.cache/nl_sql_agent_sessions.sqlite`. Interactive `chat` sessions are in-memory unless you pass `--session-store`.
+
 Run a Spider eval slice:
 
 ```bash
