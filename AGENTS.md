@@ -63,7 +63,7 @@ The repo also has a setup/start script for local services:
 scripts/start_services.sh
 ```
 
-It runs `uv sync`, installs UI dependencies if needed, verifies Spider data, and starts Phoenix, the FastAPI backend, and the Vite UI. Logs go to `.cache/services/`, which is intentionally ignored by git.
+It runs `uv sync`, installs UI dependencies if needed, verifies Spider data, and starts Phoenix, the FastAPI backend, and the Vite CopilotKit chat UI. Logs go to `.cache/services/`, which is intentionally ignored by git.
 
 The agent workflow is:
 
@@ -115,6 +115,8 @@ Important non-code files:
 - `pyproject.toml`: package metadata, dependencies, CLI entry point, pytest markers.
 - `.gitattributes`: Git LFS tracking for Spider SQLite database files.
 - `.gitignore`: ignores caches, generated eval artifacts, downloaded archives, and trace artifacts.
+- `ui/src/main.tsx`: ChatGPT-style CopilotKit-wrapped UI that consumes `/api/chat/stream`.
+- `ui/src/styles.css`: UI layout and component styling.
 
 ## OpenAI Agents SDK Contract
 
@@ -246,6 +248,8 @@ scripts/start_services.sh --trace-mode full
 scripts/start_services.sh --skip-ui
 scripts/start_services.sh --skip-install
 ```
+
+The UI is intentionally modeled as a ChatGPT-like analyst console: sidebar database selector, suggested prompts, streaming assistant response, visible reasoning/tool timeline, generated SQL block, validation errors, confidence, and trace metadata. Keep `/api/chat/stream` compatible with this event flow if changing backend streaming.
 
 ## Data Contract
 

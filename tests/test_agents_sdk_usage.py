@@ -39,3 +39,17 @@ def test_agent_structured_output_model_validates() -> None:
 
     assert isinstance(output, SQLAgentOutput)
     assert output.confidence == "high"
+
+
+def test_stream_tool_output_summaries_are_ui_safe() -> None:
+    from nl_sql_agent.agent import _summarize_tool_output, _text_chunks
+
+    summary = _summarize_tool_output(
+        {"is_valid": True, "normalized_sql": "SELECT * FROM singer"},
+        trace_mode="redacted",
+    )
+
+    assert "SELECT" not in summary
+    assert "passed" in summary
+    assert "1 row" in _summarize_tool_output('{"row_count": 1, "truncated": false}', trace_mode="redacted")
+    assert "".join(_text_chunks("The total revenue is 42.")) == "The total revenue is 42."

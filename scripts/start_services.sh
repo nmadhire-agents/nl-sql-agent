@@ -26,7 +26,7 @@ Usage: scripts/start_services.sh [options]
 Starts the local nl-sql-agent services:
   - Phoenix tracing server
   - FastAPI backend
-  - Vite/CopilotKit UI
+  - Vite/CopilotKit streaming chat UI
 
 Options:
   --skip-install     Do not run uv sync or npm install.
@@ -194,7 +194,7 @@ if [[ "$SKIP_API" -eq 0 ]]; then
   echo "  API:     http://$API_HOST:$API_PORT"
 fi
 if [[ "$SKIP_UI" -eq 0 ]]; then
-  echo "  UI:      http://$UI_HOST:$UI_PORT"
+  echo "  UI:      http://$UI_HOST:$UI_PORT  (CopilotKit streaming chat)"
 fi
 echo
 echo "Default DB: $NL_SQL_DEFAULT_DB_PATH"

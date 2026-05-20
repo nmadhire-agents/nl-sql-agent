@@ -199,7 +199,7 @@ The script runs `uv sync`, installs UI dependencies when needed, verifies the Sp
 
 - Phoenix tracing at `http://127.0.0.1:6006`
 - FastAPI backend at `http://127.0.0.1:8080`
-- Vite UI at `http://127.0.0.1:5173`
+- Vite CopilotKit chat UI at `http://127.0.0.1:5173`
 
 Useful options:
 
@@ -491,3 +491,5 @@ npm run dev
 ```
 
 The UI provides a polished chat window and is wired to display answer quality, SQL output, and agent reasoning captured from tracing-aware agent runs.
+
+The UI uses a ChatGPT-style layout with a persistent SQLite database selector, prompt suggestions, streaming answer text, visible agent reasoning/tool steps, generated SQL, validation errors, confidence, and trace metadata. The browser calls the FastAPI streaming endpoint at `/api/chat/stream`, which emits server-sent events for status updates, tool calls, SQL, final answer, and errors.

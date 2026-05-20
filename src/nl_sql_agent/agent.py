@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -67,6 +69,9 @@ class AgentAnswer:
     raw: Any | None = None
 
 
+AgentStreamPayload = dict[str, Any]
+
+
 async def ask_agent(question: str, db_path: Path, settings: Settings) -> AgentAnswer:
     return await ask_agent_with_session(question, db_path, settings, session=None)
 
@@ -78,7 +83,98 @@ async def ask_agent_with_session(
     session: Any | None = None,
 ) -> AgentAnswer:
     try:
-        from agents import Agent, RunConfig, Runner, function_tool, set_tracing_disabled
+        from agents import RunConfig, Runner
+    except ImportError as exc:
+        raise RuntimeError("openai-agents is required. Run `uv sync` first.") from exc
+
+    agent, toolkit = _build_agent(db_path, settings)
+    with span(
+        "agent.run",
+        {
+            "question": safe_attr(question, settings.trace_mode),
+            "db_path": str(db_path),
+            "system_prompt": safe_attr(INSTRUCTIONS, settings.trace_mode),
+            "model": settings.agent_model,
+        },
+    ) as current:
+        trace_id: str | None = None
+        result = await Runner.run(
+            agent,
+            input=question,
+            session=session,
+            run_config=RunConfig(workflow_name="nl-sql-agent", trace_include_sensitive_data=False),
+        )
+        trace_id = _extract_trace_id(result)
+        return _answer_from_result(result, toolkit, settings, current, trace_id)
+
+
+async def stream_agent_with_session(
+    question: str,
+    db_path: Path,
+    settings: Settings,
+    session: Any | None = None,
+) -> AsyncIterator[AgentStreamPayload]:
+    """Stream UI-friendly status/tool/final-answer events for one agent run."""
+    try:
+        from agents import RunConfig, Runner
+    except ImportError as exc:
+        raise RuntimeError("openai-agents is required. Run `uv sync` first.") from exc
+
+    agent, toolkit = _build_agent(db_path, settings)
+    with span(
+        "agent.run",
+        {
+            "question": safe_attr(question, settings.trace_mode),
+            "db_path": str(db_path),
+            "system_prompt": safe_attr(INSTRUCTIONS, settings.trace_mode),
+            "model": settings.agent_model,
+            "streaming": True,
+        },
+    ) as current:
+        yield {
+            "type": "status",
+            "title": "Starting analyst run",
+            "text": "Preparing schema discovery and SQLite validation tools.",
+        }
+        result = Runner.run_streamed(
+            agent,
+            input=question,
+            session=session,
+            run_config=RunConfig(workflow_name="nl-sql-agent-ui", trace_include_sensitive_data=False),
+        )
+        async for event in result.stream_events():
+            for payload in _stream_payloads(event, settings.trace_mode):
+                yield payload
+
+        trace_id = _extract_trace_id(result)
+        answer = _answer_from_result(result, toolkit, settings, current, trace_id)
+        yield {
+            "type": "answer_start",
+            "trace_id": answer.trace_id,
+            "confidence": answer.structured_output.confidence if answer.structured_output else "medium",
+        }
+        for chunk in _text_chunks(answer.answer):
+            yield {"type": "answer_delta", "text": chunk}
+            await asyncio.sleep(0)
+        if answer.generated_sql:
+            yield {"type": "sql", "sql": answer.generated_sql}
+        if answer.validation_error:
+            yield {"type": "validation_error", "text": answer.validation_error}
+        if answer.structured_output:
+            yield {"type": "structured_output", "output": answer.structured_output.model_dump()}
+        yield {
+            "type": "done",
+            "answer": answer.answer,
+            "sql": answer.generated_sql,
+            "reasoning": answer.reasoning,
+            "trace_id": answer.trace_id,
+            "validation_error": answer.validation_error,
+        }
+
+
+def _build_agent(db_path: Path, settings: Settings) -> tuple[Any, SQLiteToolkit]:
+    try:
+        from agents import Agent, function_tool, set_tracing_disabled
     except ImportError as exc:
         raise RuntimeError("openai-agents is required. Run `uv sync` first.") from exc
 
@@ -128,39 +224,32 @@ async def ask_agent_with_session(
         tools=[search_tables, get_schema_info, validate_sql, execute_query],
         output_type=SQLAgentOutput,
     )
-    with span(
-        "agent.run",
-        {
-            "question": safe_attr(question, settings.trace_mode),
-            "db_path": str(db_path),
-            "system_prompt": safe_attr(INSTRUCTIONS, settings.trace_mode),
-            "model": settings.agent_model,
-        },
-    ) as current:
-        trace_id: str | None = None
-        result = await Runner.run(
-            agent,
-            input=question,
-            session=session,
-            run_config=RunConfig(workflow_name="nl-sql-agent", trace_include_sensitive_data=False),
-        )
-        structured_output = _coerce_structured_output(result.final_output)
-        final_answer = structured_output.answer if structured_output else str(result.final_output)
-        generated_sql = toolkit.last_executed_sql or toolkit.last_validated_sql
-        if generated_sql is None and structured_output:
-            generated_sql = structured_output.sql
-        set_span_attribute(current, "final_answer", safe_attr(final_answer, settings.trace_mode))
-        if generated_sql:
-            set_span_attribute(current, "generated_sql", safe_attr(generated_sql, settings.trace_mode))
-        reasoning = _extract_reasoning(result)
-        if reasoning:
-            set_span_attribute(current, "reasoning", safe_attr(reasoning, settings.trace_mode))
-        tool_events = _extract_tool_events(result)
-        if tool_events:
-            set_span_attribute(current, "tool_events", trace_payload(tool_events, settings.trace_mode))
-        trace_id = _extract_trace_id(result)
-        if trace_id:
-            set_span_attribute(current, "trace_id", trace_id)
+    return agent, toolkit
+
+
+def _answer_from_result(
+    result: Any,
+    toolkit: SQLiteToolkit,
+    settings: Settings,
+    current_span: Any,
+    trace_id: str | None,
+) -> AgentAnswer:
+    structured_output = _coerce_structured_output(result.final_output)
+    final_answer = structured_output.answer if structured_output else str(result.final_output)
+    generated_sql = toolkit.last_executed_sql or toolkit.last_validated_sql
+    if generated_sql is None and structured_output:
+        generated_sql = structured_output.sql
+    set_span_attribute(current_span, "final_answer", safe_attr(final_answer, settings.trace_mode))
+    if generated_sql:
+        set_span_attribute(current_span, "generated_sql", safe_attr(generated_sql, settings.trace_mode))
+    reasoning = _extract_reasoning(result)
+    if reasoning:
+        set_span_attribute(current_span, "reasoning", safe_attr(reasoning, settings.trace_mode))
+    tool_events = _extract_tool_events(result)
+    if tool_events:
+        set_span_attribute(current_span, "tool_events", trace_payload(tool_events, settings.trace_mode))
+    if trace_id:
+        set_span_attribute(current_span, "trace_id", trace_id)
     return AgentAnswer(
         answer=final_answer,
         generated_sql=generated_sql,
@@ -224,3 +313,131 @@ def _item_payload(item: Any) -> str:
         except Exception:
             pass
     return str(item)
+
+
+def _stream_payloads(event: Any, trace_mode: str) -> list[AgentStreamPayload]:
+    event_type = getattr(event, "type", "")
+    if event_type == "agent_updated_stream_event":
+        agent_name = getattr(getattr(event, "new_agent", None), "name", "agent")
+        return [{"type": "status", "title": "Agent selected", "text": f"{agent_name} is handling the request."}]
+
+    if event_type == "raw_response_event":
+        return _raw_response_payloads(getattr(event, "data", None))
+
+    if event_type != "run_item_stream_event":
+        return []
+
+    name = getattr(event, "name", "")
+    item = getattr(event, "item", None)
+    if name == "tool_called":
+        tool_name = getattr(item, "tool_name", None) or _raw_field(getattr(item, "raw_item", None), "name") or "tool"
+        return [
+            {
+                "type": "tool_call",
+                "name": tool_name,
+                "title": _tool_title(tool_name),
+                "text": _tool_call_text(tool_name),
+            }
+        ]
+    if name == "tool_output":
+        output = getattr(item, "output", None)
+        return [
+            {
+                "type": "tool_output",
+                "title": "Tool returned",
+                "text": _summarize_tool_output(output, trace_mode),
+            }
+        ]
+    if name == "reasoning_item_created":
+        return [{"type": "reasoning", "text": "The model recorded a reasoning summary for this step."}]
+    if name == "message_output_created":
+        return [{"type": "status", "title": "Composing answer", "text": "Formatting the answer, SQL, and metadata."}]
+    return []
+
+
+def _raw_response_payloads(data: Any) -> list[AgentStreamPayload]:
+    raw_type = getattr(data, "type", "")
+    delta = getattr(data, "delta", None)
+    if isinstance(delta, str) and "reasoning" in raw_type:
+        return [{"type": "reasoning_delta", "text": delta}]
+    return []
+
+
+def _raw_field(raw_item: Any, field_name: str) -> Any:
+    if isinstance(raw_item, dict):
+        return raw_item.get(field_name)
+    return getattr(raw_item, field_name, None)
+
+
+def _tool_title(tool_name: str) -> str:
+    titles = {
+        "search_tables": "Searching schema",
+        "get_schema_info": "Reading table definitions",
+        "validate_sql": "Validating SQL",
+        "execute_query": "Executing read-only query",
+    }
+    return titles.get(tool_name, f"Calling {tool_name}")
+
+
+def _tool_call_text(tool_name: str) -> str:
+    descriptions = {
+        "search_tables": "Looking for tables and columns that match the question.",
+        "get_schema_info": "Loading DDL, columns, keys, indexes, and relationships.",
+        "validate_sql": "Checking that the generated statement is safe SQLite SQL.",
+        "execute_query": "Running the validated query with row caps and read-only protections.",
+    }
+    return descriptions.get(tool_name, "Running an agent tool.")
+
+
+def _summarize_tool_output(output: Any, trace_mode: str) -> str:
+    if isinstance(output, str):
+        try:
+            output = json.loads(output)
+        except json.JSONDecodeError:
+            return "Tool output captured."
+    if not isinstance(output, dict):
+        return "Tool output captured."
+    if "candidates" in output:
+        candidates = output.get("candidates") or []
+        names = [str(candidate.get("table")) for candidate in candidates if isinstance(candidate, dict) and candidate.get("table")]
+        if names:
+            return f"Found candidate tables: {', '.join(names[:5])}."
+        return "No strong table candidates found."
+    if "tables" in output:
+        tables = output.get("tables") or {}
+        if isinstance(tables, dict) and tables:
+            return f"Loaded schema for: {', '.join(list(tables)[:5])}."
+        return "Schema lookup completed."
+    if "is_valid" in output:
+        if output.get("is_valid"):
+            sql = output.get("normalized_sql")
+            if trace_mode == "full" and sql:
+                return f"SQL validated: {sql}"
+            return "SQL passed parser, safety, and SQLite query-plan checks."
+        return f"SQL validation failed: {output.get('error') or 'unknown error'}"
+    if "row_count" in output:
+        row_count = output.get("row_count")
+        truncated = " Results were truncated." if output.get("truncated") else ""
+        return f"Query returned {row_count} row(s).{truncated}"
+    return "Tool output captured."
+
+
+def _text_chunks(text: str, chunk_size: int = 18) -> list[str]:
+    words = text.split(" ")
+    if len(words) <= 1:
+        return [text]
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for word in words:
+        extra = len(word) + (1 if current else 0)
+        if current and current_len + extra > chunk_size:
+            chunks.append(" ".join(current) + " ")
+            current = [word]
+            current_len = len(word)
+        else:
+            current.append(word)
+            current_len += extra
+    if current:
+        chunks.append(" ".join(current))
+    return chunks
