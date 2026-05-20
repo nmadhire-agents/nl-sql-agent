@@ -441,3 +441,22 @@ data/spider/__MACOSX/
 ## License
 
 This project is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
+
+
+### CopilotKit UI (Beautiful Chat + Reasoning)
+
+Run the FastAPI backend:
+
+```bash
+uv run nl-sql web --host 127.0.0.1 --port 8080
+```
+
+In another terminal run the UI:
+
+```bash
+cd ui
+npm install
+npm run dev
+```
+
+The UI provides a polished chat window and is wired to display answer quality, SQL output, and agent reasoning captured from tracing-aware agent runs.

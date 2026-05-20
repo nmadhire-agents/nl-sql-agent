@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 from typing import Any, Literal
 
@@ -62,6 +63,7 @@ class AgentAnswer:
     validation_error: str | None
     structured_output: SQLAgentOutput | None = None
     trace_id: str | None = None
+    reasoning: str | None = None
     raw: Any | None = None
 
 
@@ -135,6 +137,7 @@ async def ask_agent_with_session(
             "model": settings.agent_model,
         },
     ) as current:
+        trace_id: str | None = None
         result = await Runner.run(
             agent,
             input=question,
@@ -149,11 +152,22 @@ async def ask_agent_with_session(
         set_span_attribute(current, "final_answer", safe_attr(final_answer, settings.trace_mode))
         if generated_sql:
             set_span_attribute(current, "generated_sql", safe_attr(generated_sql, settings.trace_mode))
+        reasoning = _extract_reasoning(result)
+        if reasoning:
+            set_span_attribute(current, "reasoning", safe_attr(reasoning, settings.trace_mode))
+        tool_events = _extract_tool_events(result)
+        if tool_events:
+            set_span_attribute(current, "tool_events", trace_payload(tool_events, settings.trace_mode))
+        trace_id = _extract_trace_id(result)
+        if trace_id:
+            set_span_attribute(current, "trace_id", trace_id)
     return AgentAnswer(
         answer=final_answer,
         generated_sql=generated_sql,
         validation_error=toolkit.last_error or (structured_output.validation_error if structured_output else None),
         structured_output=structured_output,
+        trace_id=trace_id,
+        reasoning=reasoning,
         raw=result,
     )
 
@@ -164,3 +178,49 @@ def _coerce_structured_output(value: Any) -> SQLAgentOutput | None:
     if isinstance(value, dict):
         return SQLAgentOutput.model_validate(value)
     return None
+
+
+def _extract_trace_id(result: Any) -> str | None:
+    for attr in ("trace_id", "id", "run_id"):
+        value = getattr(result, attr, None)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _extract_reasoning(result: Any) -> str | None:
+    for attr in ("reasoning", "reasoning_summary", "summary"):
+        value = getattr(result, attr, None)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _extract_tool_events(result: Any) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    raw_items = getattr(result, "new_items", None) or getattr(result, "items", None)
+    if not raw_items:
+        return events
+    for item in raw_items:
+        item_type = getattr(item, "type", None) or item.__class__.__name__
+        payload = _item_payload(item)
+        events.append({"type": str(item_type), "payload": payload})
+    return events
+
+
+def _item_payload(item: Any) -> str:
+    for attr in ("model_dump_json", "to_json"):
+        method = getattr(item, attr, None)
+        if callable(method):
+            try:
+                value = method()
+                if isinstance(value, str):
+                    return value
+            except Exception:
+                continue
+    if hasattr(item, "model_dump"):
+        try:
+            return json.dumps(item.model_dump(), default=str, sort_keys=True)
+        except Exception:
+            pass
+    return str(item)
