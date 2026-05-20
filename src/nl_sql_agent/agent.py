@@ -63,6 +63,7 @@ class AgentAnswer:
     validation_error: str | None
     structured_output: SQLAgentOutput | None = None
     trace_id: str | None = None
+    reasoning: str | None = None
     raw: Any | None = None
 
 
@@ -136,6 +137,7 @@ async def ask_agent_with_session(
             "model": settings.agent_model,
         },
     ) as current:
+        trace_id: str | None = None
         result = await Runner.run(
             agent,
             input=question,
@@ -165,6 +167,7 @@ async def ask_agent_with_session(
         validation_error=toolkit.last_error or (structured_output.validation_error if structured_output else None),
         structured_output=structured_output,
         trace_id=trace_id,
+        reasoning=reasoning,
         raw=result,
     )
 

@@ -14,6 +14,7 @@ from nl_sql_agent.sql_safety import format_sql
 from nl_sql_agent.tracing import configure_tracing
 
 
+
 app = typer.Typer(help="SQLite NL-to-SQL command-line agent.")
 data_app = typer.Typer(help="Dataset download and verification commands.")
 app.add_typer(data_app, name="data")
@@ -140,6 +141,17 @@ def download_spider_cmd(
     typer.echo("Source: https://yale-lily.github.io/spider")
     typer.echo("License: CC BY-SA 4.0")
 
+
+
+
+@app.command("web")
+def web(host: str = "127.0.0.1", port: int = 8080) -> None:
+    """Run the FastAPI backend used by the CopilotKit UI."""
+    try:
+        import uvicorn
+    except ImportError as exc:
+        raise RuntimeError("uvicorn is required. Run `uv sync` first.") from exc
+    uvicorn.run("nl_sql_agent.web:app", host=host, port=port, reload=False)
 
 @app.command("trace-server")
 def trace_server(host: str = "127.0.0.1", port: int = 6006) -> None:
