@@ -1,4 +1,5 @@
 .venv/
+ui/node_modules/
 __pycache__/
 .pytest_cache/
 .ruff_cache/
@@ -8,6 +9,7 @@ __pycache__/
 data/spider/spider.zip
 data/spider/__MACOSX/
 .cache/benchmarks/
+.cache/services/
 .cache/nl_sql_agent_sessions.sqlite
 eval_runs/
 traces/

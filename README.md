@@ -12,6 +12,12 @@ cp .env.example .env
 # Add OPENAI_API_KEY=... to .env
 ```
 
+To start the local tracing server, API backend, and UI together:
+
+```bash
+scripts/start_services.sh
+```
+
 Ask a question against the included Spider SQLite data:
 
 ```bash
@@ -180,6 +186,31 @@ NL_SQL_JUDGE_MODEL=gpt-4.1-mini
 ```
 
 ## CLI Commands
+
+### Start Local Services
+
+Use the setup/start script when you want the local services running together:
+
+```bash
+scripts/start_services.sh
+```
+
+The script runs `uv sync`, installs UI dependencies when needed, verifies the Spider SQLite data exists, and starts:
+
+- Phoenix tracing at `http://127.0.0.1:6006`
+- FastAPI backend at `http://127.0.0.1:8080`
+- Vite UI at `http://127.0.0.1:5173`
+
+Useful options:
+
+```bash
+scripts/start_services.sh --trace-mode full
+scripts/start_services.sh --skip-ui
+scripts/start_services.sh --skip-trace
+scripts/start_services.sh --skip-install
+```
+
+Service logs are written to `.cache/services/`. Press `Ctrl+C` in the script terminal to stop all services it started.
 
 ### Download Or Verify Spider Data
 

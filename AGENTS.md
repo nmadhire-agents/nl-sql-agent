@@ -46,7 +46,7 @@ The project evolved through these explicit user requirements:
 
 ## Current User-Facing Workflows
 
-The repo supports four main workflows:
+The repo supports five main workflows:
 
 ```mermaid
 flowchart LR
@@ -56,6 +56,14 @@ flowchart LR
     CLI --> Eval["eval<br/>Spider scoring"]
     CLI --> Trace["trace-server<br/>Phoenix UI"]
 ```
+
+The repo also has a setup/start script for local services:
+
+```bash
+scripts/start_services.sh
+```
+
+It runs `uv sync`, installs UI dependencies if needed, verifies Spider data, and starts Phoenix, the FastAPI backend, and the Vite UI. Logs go to `.cache/services/`, which is intentionally ignored by git.
 
 The agent workflow is:
 
@@ -223,6 +231,20 @@ Then in another terminal:
 
 ```bash
 NL_SQL_TRACE_MODE=full uv run nl-sql eval --dataset spider --data-dir data/spider --split dev --limit 1 --judge
+```
+
+Start all local services together:
+
+```bash
+scripts/start_services.sh
+```
+
+Common variants:
+
+```bash
+scripts/start_services.sh --trace-mode full
+scripts/start_services.sh --skip-ui
+scripts/start_services.sh --skip-install
 ```
 
 ## Data Contract
