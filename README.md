@@ -199,7 +199,7 @@ The script runs `uv sync`, installs UI dependencies when needed, verifies the Sp
 
 - Phoenix tracing at `http://127.0.0.1:6006`
 - FastAPI backend at `http://127.0.0.1:8080`
-- Vite CopilotKit chat UI at `http://127.0.0.1:5173`
+- Vite streaming chat UI at `http://127.0.0.1:5173`
 
 Useful options:
 
@@ -474,7 +474,7 @@ data/spider/__MACOSX/
 This project is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
 
 
-### CopilotKit UI (Beautiful Chat + Reasoning)
+### Streaming Chat UI
 
 Run the FastAPI backend:
 

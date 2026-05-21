@@ -1,6 +1,5 @@
 import React, { FormEvent, KeyboardEvent, useMemo, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
-import { CopilotKit } from "@copilotkit/react-core";
 import {
   Bot,
   CheckCircle2,
@@ -182,8 +181,7 @@ function App() {
   }
 
   return (
-    <CopilotKit runtimeUrl="http://127.0.0.1:8080/api/chat">
-      <div className="app-shell">
+    <div className="app-shell">
         <aside className="sidebar">
           <div className="brand-row">
             <div className="brand-mark">
@@ -290,8 +288,7 @@ function App() {
             </div>
           </form>
         </main>
-      </div>
-    </CopilotKit>
+    </div>
   );
 }
 
